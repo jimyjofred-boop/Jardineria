@@ -161,9 +161,12 @@ WHERE  NOT EXISTS(
 -- S7 [Correlacionada]: Clientes con límite de crédito < total de sus pedidos
 SELECT * from cliente
 -- S8 [IN/Correlacionada]: Productos con stock < promedio global
-
+SELECT codigo_producto, sum(cantidad_en_stock) as cantidad_en_stock from producto p
+GROUP BY codigo_producto
 -- S9 [EXISTS]: Clientes con pagos > promedio de todos los pagos
-
+SELECT c.codigo_cliente,c.nombre_cliente,p.total from cliente c
+INNER JOIN pago p 
+on c.codigo_cliente =p.codigo_cliente
 -- S10 [IN + TOP]: Pedidos dentro del top 10 por importe total
 
 
@@ -172,14 +175,49 @@ SELECT * from cliente
 -- ======================
 
 -- V1: dbo.vw_ClientesSinPagos  -- Clientes sin registros en pagos
-SELECT  FROM 
-pago
+CREATE OR ALTER VIEW dbo.vw_ClientesSinPagos AS
+select c.nombre_cliente
+ from dbo.cliente as c
+ where codigo_cliente NOT IN
+ (SELECT codigo_cliente from pedido)
+
+
+SELECT * from dbo.vw_ClientesSinPagos
+
 
 -- V2: dbo.vw_OficinasBajaActividad  -- Oficinas con < 3 empleados
--- V3: dbo.vw_RankingVentasProducto  -- Ingreso por producto (agregado)
--- V4: dbo.vw_PedidosPendientesPorCliente  -- Conteo de pedidos 'Pendiente/En Proceso' por cliente
--- V5: dbo.vw_IngresoPorGama  -- Ingreso total por gama
 
+CREATE OR ALTER VIEW dbo.vw_OficinasBajaActividad AS
+select o.codigo_oficina,o.ciudad,o.pais,COUNT(e.codigo_empleado) as total_empleados
+from oficina o 
+LEFT JOIN empleado e
+ON o.codigo_oficina = e.codigo_oficina
+GROUP BY o.codigo_oficina,o.ciudad,o.pais
+HAVING COUNT(e.codigo_empleado) < 3
+
+SELECT * FROM dbo.vw_OficinasBajaActividad
+-- V3: dbo.vw_RankingVentasProducto  -- Ingreso por producto (agregado)
+CREATE or alter VIEW dbo.vw_RankingVentasProducto AS
+SELECT p.codigo_producto,sum(dp.cantidad*precio_unidad) as Total_ingreso from producto p
+LEFT JOIN detalle_pedido dp 
+on p.codigo_producto = dp.codigo_producto
+GROUP BY p.codigo_producto
+
+select * from dbo.vw_RankingVentasProducto
+-- V4: dbo.vw_PedidosPendientesPorCliente  
+-- Conteo de pedidos  por cliente
+CREATE or ALTER VIEW dbo.vw_PedidosPendientesPorCliente AS
+SELECT codigo_cliente,estado,COUNT(estado) AS cantidad FROM pedido
+GROUP BY codigo_cliente,estado
+
+-- V5: dbo.vw_IngresoPorGama  -- Ingreso total por gama
+CREATE or ALTER VIEW dbo.vw_IngresoPorGama AS
+SELECT p.gama,sum(dp.cantidad*precio_unidad) FROM producto p
+inner join gama_producto gp
+ON p.gama = gp.gama
+INNER JOIN detalle_pedido dp
+on dp.codigo_producto = p.codigo_producto
+GROUP BY p.gama
 
 -- =========================================
 -- [TRANSACCIONES] (15: 5 INSERT / 5 UPDATE / 5 DELETE)
@@ -189,9 +227,44 @@ pago
 -- INSERT (5)
 -- --------
 -- T-INS-1: Alta de pedido + 1 detalle con control de stock
+BEGIN TRANSACTION Alta_pedido  
+
+INSERT into pedido(codigo_pedido,fecha_pedido,fecha_esperada,fecha_entrega,estado,comentarios,codigo_cliente) 
+
+VALUES(129,'2025-08-1','2025-09-1','2025-09-1','Entregado','',8) 
+
+ 
+
+ROLLBACK 
+
+COMMIT; 
+
 -- T-INS-2: Registrar un pago si el cliente tiene pedidos entregados
+BEGIN TRANSACTION Registrar_pago
+SELECT * from pago
+SELECT * FROM detalle_pedido 
+SELECT * FROM pedido
 -- T-INS-3: Crear oficina y dos empleados (SAVEPOINT para revertir parcial)
+BEGIN TRANSACTION oficina_empleados
+INSERT into 
+oficina(codigo_oficina,ciudad,pais,region,codigo_postal,telefono,linea_direccion1,linea_direccion2) 
+VALUES('GUA_CP','MIXCO','GUATEMALA','MIXCO',50002,+50258245677,'ZONA 10 CAPITAL','EDIFICIO GEMINIS')
+INSERT INTO empleado
+(codigo_empleado,nombre,apellido1,apellido2,extension,email,codigo_oficina,codigo_jefe,puesto)
+VALUES(32,'JUAN','ALDO','NEVIS',3321,'JAL@GMAIL.COM','GUA_CP',1,'Representante de Ventas'),
+(33,'Lucas','Silvio','Rodrigues',3321,'LSR@GMAIL.COM','GUA_CP',1,'Representante de Ventas')
+
+
+ROLLBACK
+COMMIT
+
+
 -- T-INS-4: Alta masiva de productos de una gama nueva (validar existencia)
+BEGIN TRANSACTION gama_nueva
+
+SELECT * FROM gama_producto
+select * from producto
+
 -- T-INS-5: Clonar cliente como “prospecto” (prefijo en nombre y crédito=0)
 
 -- -------
